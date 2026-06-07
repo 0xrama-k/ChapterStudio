@@ -165,8 +165,14 @@ def _transcribe_whisper(
             duration_hint / 3600,
         )
 
-    model = WhisperModel(model_name, device="auto", compute_type="auto")
-    segments_iter, info = model.transcribe(audio_path, vad_filter=True)
+    try:
+        model = WhisperModel(model_name, device="auto", compute_type="auto")
+        segments_iter, info = model.transcribe(audio_path, vad_filter=True)
+    except (RuntimeError, OSError) as e:
+        # CUDA/cuBLAS not installed or fails to load — fall back to CPU.
+        log.warning("Whisper GPU init failed (%s); retrying on CPU.", e)
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+        segments_iter, info = model.transcribe(audio_path, vad_filter=True)
     segs = [
         Segment(start=float(s.start or 0.0), end=float(s.end or 0.0), text=s.text.strip())
         for s in segments_iter
