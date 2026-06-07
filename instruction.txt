@@ -1,0 +1,309 @@
+# Hermes Agent Plugin: Automatic YouTube Chapter Generator
+
+> This document is a task specification (spec/prompt) for Claude Code. Goal: build a
+> Hermes Agent plugin that obtains a YouTube video's transcript, splits it into
+> chapters based on topic shifts, and outputs them in the `00:00 Title` format that
+> YouTube accepts.
+
+---
+
+## 1. Purpose and Context
+
+YouTube creators currently create chapter markers **manually**: they write a
+timestamped list in the video description in the form `00:00 Title`. YouTube's rules:
+the first line must be `00:00`, there must be at least 3 timestamps, and each chapter
+must be at least 10 seconds long.
+
+This is tedious and boring on long videos (podcasts, lectures, webinars). This plugin
+automates it: the creator provides a video URL, and the plugin returns a chapter list
+ready to paste directly into the description.
+
+**This is a Hermes Agent plugin**, not a standalone script. It must integrate with
+Hermes's plugin system and its `ctx.llm` call interface.
+
+---
+
+## 2. Technical Goal and Constraints
+
+- **Language:** Python 3.10+
+- **Framework:** Hermes Agent plugin system (config schema v21+, `ctx.llm`-capable version — v0.14.0+)
+- **Location:** `~/.hermes/plugins/youtube-chapters/`
+- **Dependencies:** `youtube-transcript-api`, `yt-dlp`, `faster-whisper` (local Whisper).
+  API-based Whisper should be configurable as an optional alternative, but the default
+  must be local.
+- **Model calls:** Use Hermes's active provider (`ctx.llm`) wherever possible. The
+  plugin should not try to manage its own API keys.
+- **Design principle:** Don't depend on a single method. Build a tiered (fallback)
+  chain — fast/cheap path first, heavy path only when needed.
+
+---
+
+## 3. Plugin File Structure
+
+Following the Hermes plugin standard, create this structure:
+
+```
+~/.hermes/plugins/youtube-chapters/
+├── plugin.yaml          # manifest (plugin name, version, registered tools)
+├── __init__.py          # register() — wires schemas to handlers
+├── schemas.py           # tool schemas (what the model sees)
+├── tools.py             # tool handlers (code that runs when called)
+├── transcript.py        # transcript acquisition layer (fallback chain)
+├── chapters.py          # chaptering logic (the core work)
+├── formatting.py        # conversion to YouTube format + validation
+└── requirements.txt
+```
+
+---
+
+## 4. Overall Workflow (Pipeline)
+
+The flow below is the heart of the tool. Each step passes a **list of timestamped
+segments** to the next; this shared data format connects all the layers.
+
+```
+User: "Generate chapters for this video: <URL>"
+        │
+        ▼
+[1] Parse input  ── validate URL / video ID
+        │
+        ▼
+[2] Acquire transcript  (FALLBACK CHAIN)
+        │   2a. Does the video already have chapters?  → if so, inform the user, but
+        │       continue if they want (a creator may want to regenerate)
+        │   2b. Manual YouTube captions available?      → use them
+        │   2c. Auto YouTube captions (ASR) available?  → use them
+        │   2d. If none / faulty:
+        │         - download AUDIO STREAM ONLY via yt-dlp
+        │         - transcribe with faster-whisper
+        │   → OUTPUT: timestamped segments [{start, end, text}, ...]
+        │
+        ▼
+[3] Chaptering  (CHAPTER LOGIC)
+        │   3a. If existing chapters → cut by them (deterministic)
+        │   3b. If not → split by topic shifts + generate titles via ctx.llm
+        │   → OUTPUT: [{start_seconds, title}, ...]
+        │
+        ▼
+[4] Format + Validate
+        │   - enforce YouTube rules (00:00 start, ≥3 chapters, ≥10s spacing)
+        │   - convert to HH:MM:SS / MM:SS format
+        │
+        ▼
+[5] Output
+            00:00 Introduction
+            02:15 Installation
+            07:40 Configuration
+            ...
+```
+
+---
+
+## 5. Layer-by-Layer Detailed Specification
+
+### 5.1 `transcript.py` — Transcript Acquisition
+
+Expose a single general function:
+`get_transcript(video_id, *, prefer_whisper=False, whisper_model="small") -> TranscriptResult`
+
+Behavior (try in order, return the first that succeeds):
+
+1. **Manual captions via `youtube-transcript-api`** — highest priority if present
+   (best punctuation and accuracy).
+2. **Auto captions (ASR) via `youtube-transcript-api`** — if no manual ones.
+3. **Whisper fallback** — if the above fail, or if `prefer_whisper=True`:
+   - Download **audio only** via `yt-dlp` (`bestaudio`, m4a/webm if possible; do not
+     download the full video).
+   - Save to a temp directory; clean up afterward.
+   - Transcribe with `faster-whisper`; return segments + timestamps.
+
+**Return type** must be identical for every method:
+```python
+@dataclass
+class TranscriptResult:
+    segments: list[Segment]   # each: start (float, sec), end (float, sec), text (str)
+    source: str               # "manual" | "auto" | "whisper"
+    language: str
+    duration_seconds: float
+```
+
+**Edge cases (handle all; never crash silently):**
+- Video not found / private / age-restricted → return a meaningful error message.
+- Captions disabled + Whisper also fails (e.g. audio couldn't be downloaded) → clear error.
+- Unsupported language → still try Whisper (Whisper is multilingual).
+- Very long video (e.g. >2 hours) → warn the user that Whisper will take a while.
+- IP block / rate limit → catch it, inform the user with a retry suggestion.
+
+### 5.2 `chapters.py` — Chaptering Logic (the core value)
+
+Two strategies, in order:
+
+**Strategy A — From existing chapters (deterministic):**
+- `yt-dlp` video metadata may include chapter info (the `chapters` field). If present,
+  take it directly; never call the LLM. (Note: if the creator says "regenerate", skip
+  this step.)
+
+**Strategy B — LLM-based chaptering (`ctx.llm`):**
+- Input: the list of timestamped segments.
+- Flatten the segments into a single text along with their timestamps (e.g. `[125s] text...`).
+- For very long transcripts, **process in chunks** so as not to exceed the model's
+  context window; collect candidate chapter points from each chunk, then merge.
+- The instruction given to the model must include these rules:
+  - Start a chapter at topic/subtopic shifts.
+  - Give each chapter a **specific, content-reflecting** title — a generic title like
+    "Chapter 2" is FORBIDDEN. (E.g. "Setting up the PostgreSQL connection".)
+  - Aim for a reasonable number of chapters based on video length: roughly
+    **3-6 chapters per 10 minutes**.
+  - Request output as **strict JSON**: `[{"start_seconds": <int>, "title": "<str>"}]`.
+    No markdown, no commentary, no preamble/postamble.
+- Safely parse the JSON the model returns; if malformed, ask once for a fix and retry,
+  and if it still fails, return a meaningful error.
+
+**Title language:** Titles should be in whatever language the transcript is in (unless
+the creator requests otherwise). Expose this as a parameter too: `title_language="auto"`.
+
+### 5.3 `formatting.py` — Formatting and Validation
+
+`to_youtube_chapters(chapters, duration_seconds) -> str` plus validation:
+
+- **Force** the first chapter to `00:00` (add/shift if missing). YouTube requires this.
+- Sort chapters by timestamp.
+- Enforce the **minimum 10 seconds** rule: merge two chapters that are closer than 10s.
+- Ensure there are **at least 3 chapters**; if that can't be met, warn the user (may be
+  a short video).
+- Time format: shorter than 1 hour → `MM:SS`, longer → `HH:MM:SS`.
+- Output must be plain text ready to paste directly into the description:
+  ```
+  00:00 Introduction
+  02:15 Installation
+  07:40 Configuration
+  ```
+
+### 5.4 `schemas.py` and `tools.py` — Hermes Integration
+
+- `schemas.py`: describe the tool clearly to the model. Tool name e.g.
+  `youtube_generate_chapters`. Parameters: `url` (required), `prefer_whisper` (opt.),
+  `whisper_model` (opt.), `regenerate` (opt. — ignore existing chapters),
+  `title_language` (opt.). The description should clearly explain when the tool should
+  be called (so the model triggers it correctly).
+- `tools.py`: the handler bound to the schema. Inside, call the pipeline (`transcript`
+  → `chapters` → `formatting`) in order. For long operations (Whisper), return
+  progress/warning messages to the user. Use `ctx.llm` for model calls.
+- `__init__.py`: register the schema-to-handler mapping with Hermes via `register()`.
+- `plugin.yaml`: manifest — name, version, description, registered tool(s).
+
+---
+
+## 6. User Experience (example interaction)
+
+```
+Creator: "Generate chapters for this video: https://youtube.com/watch?v=XXXX"
+
+Plugin:
+  - Transcript source: auto captions (English)
+  - 8 chapters generated.
+
+  00:00 Introduction and overview
+  01:42 Installation steps
+  06:18 The configuration file
+  ...
+
+  You can paste this directly into your video description.
+```
+
+Scenario variations:
+- No captions → say "No captions found, downloading audio and transcribing with
+  Whisper, this may take a few minutes..." then continue.
+- Video already has chapters → inform the user; they can regenerate via `regenerate`.
+
+---
+
+## 7. Tests and Acceptance Criteria
+
+The plugin must work correctly in these cases:
+1. Video with manual captions → manual transcript is used, chapters generated.
+2. Video with only auto captions → ASR transcript is used.
+3. Video with captions disabled → Whisper fallback kicks in, still produces output.
+4. Video that already has chapters → existing chapters are read (deterministic),
+   LLM chaptering can be forced via `regenerate`.
+5. Very short video (fewer than 3 chapters' worth) → user is warned, no crash.
+6. Every output conforms to YouTube rules: `00:00` start, ≥3 chapters, ≥10s spacing,
+   correct time format.
+7. Titles are not generic, but content-specific.
+
+---
+
+## 8. Model & Billing Configuration (IO Intelligence)
+
+The plugin does **not** pick or hard-code an LLM. It uses Hermes's active model via
+`ctx.llm`. The model is chosen once at the Hermes level, and the plugin inherits it
+automatically. This section documents how that model is configured so Claude Code knows
+the runtime environment.
+
+**Provider:** IO Intelligence (io.net) — an OpenAI-compatible inference API serving
+open-source models (Llama, DeepSeek, Qwen, etc.). Hermes connects to it as a **custom /
+OpenAI-compatible endpoint**.
+
+**Configuration values:**
+- Base URL: `https://api.intelligence.io.solutions/api/v1`
+- Default model: `meta-llama/Llama-3.3-70B-Instruct` (or another IO model that meets the
+  64K context requirement — see warning below)
+- API key: supplied **only as an environment variable** — see below.
+
+**API key handling — env var only (hard requirement):**
+- The key must come from the environment variable `IOINTELLIGENCE_API_KEY`.
+- Do **not** write the key into `config.yaml`, into any plugin file, into code, into
+  logs, or into committed files. Never echo or print it.
+- The plugin code itself should not read the key at all — model calls go through
+  `ctx.llm`, and Hermes is responsible for passing credentials to the provider. The
+  plugin must never reach for the key directly.
+- If, and only if, a setup step requires referencing the key, reference it as
+  `${IOINTELLIGENCE_API_KEY}` (env expansion), never the literal value.
+
+**Example Hermes configuration (for reference in the README, not to be executed by the
+plugin):**
+```
+export IOINTELLIGENCE_API_KEY=...        # user sets this in their shell/profile
+
+hermes config set model.provider custom
+hermes config set model.base_url https://api.intelligence.io.solutions/api/v1
+hermes config set model.default meta-llama/Llama-3.3-70B-Instruct
+```
+Then `ctx.llm` inside the plugin uses this model with no further wiring.
+
+**Context window warning:** Hermes requires a model with at least **64,000 tokens** of
+context, or it rejects the model at startup. Confirm the chosen IO model meets this.
+For long transcripts the plugin must still chunk (see 5.2) regardless of window size.
+
+**Billing note (for README):** IO Intelligence offers a free daily token allowance per
+model that is generous for personal/low-volume use. Heavy or commercial-scale use may
+exceed the free tier and require a paid plan. This does not change any plugin code —
+only the Hermes-level model/credentials.
+
+---
+
+## 9. Things to Watch For (notes for Claude Code)
+
+- First, reference the Hermes plugin docs: use the exact `plugin.yaml` + `register()`
+  pattern from the "Build a Hermes Plugin" guide. Do not modify core code.
+- Verify the `ctx.llm` call signature from the plugin API; do not assume it. If unsure,
+  isolate it in a single helper function so the signature is easy to change.
+- Wrap all network/download operations in try/except; return understandable messages to
+  the user, not raw stack traces.
+- Always clean up temporary audio files after processing.
+- When expecting JSON from the LLM, parse the response safely (strip markdown fences).
+- Privacy note: when local Whisper is used, data never leaves the machine; state this in the README.
+- Legal note: downloading audio may be risky under YouTube's ToS outside of
+  personal/research use; add a short warning to the README.
+
+---
+
+## 10. Deliverables
+
+- A working plugin in the file structure above.
+- `requirements.txt`.
+- A short `README.md`: installation (via `hermes plugins`), usage example, the
+  IO Intelligence model setup (with the `IOINTELLIGENCE_API_KEY` env var), and
+  limitations (Whisper time when captions are missing, hardware requirements,
+  legal warning).
+- Code comments may be in English or Turkish, but be consistent.
