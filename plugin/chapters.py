@@ -171,41 +171,36 @@ def _parse_json_array(text: str) -> list[dict]:
 
 
 def _call_llm(ctx: Any, prompt: str) -> str:
-    """Funnel point for the Hermes `ctx.llm` call.
+    """Funnel point for the Hermes ``ctx.llm`` call.
 
-    The exact signature of ctx.llm is not standardized in the spec, so we try
-    a few common shapes. Adjust here if Hermes settles on one.
+    Uses the documented :class:`agent.plugin_llm.PluginLlm` surface:
+    ``ctx.llm.complete(messages=...).text``. Kept in one place so it's easy
+    to adjust if the host API shifts.
     """
     llm = getattr(ctx, "llm", None)
     if llm is None:
         raise ChapterError("Hermes context has no `llm` attribute; cannot call the model.")
 
-    # 1) ctx.llm(prompt) -> str
-    try:
-        result = llm(prompt)
-        if isinstance(result, str):
-            return result
-        # 2) ctx.llm(prompt) -> {"text": ...} or similar
-        if isinstance(result, dict):
-            for key in ("text", "content", "output", "response"):
-                if key in result and isinstance(result[key], str):
-                    return result[key]
-    except TypeError:
-        pass
+    complete = getattr(llm, "complete", None)
+    if not callable(complete):
+        raise ChapterError("ctx.llm has no .complete() method; Hermes >=0.14 required.")
 
-    # 3) ctx.llm(messages=[{role, content}]) -> ...
     try:
-        result = llm(messages=[{"role": "user", "content": prompt}])
-        if isinstance(result, str):
-            return result
-        if isinstance(result, dict):
-            for key in ("text", "content", "output", "response"):
-                if key in result and isinstance(result[key], str):
-                    return result[key]
-    except TypeError:
-        pass
+        result = complete(messages=[{"role": "user", "content": prompt}])
+    except Exception as e:
+        raise ChapterError(f"LLM call failed: {e}") from e
 
-    raise ChapterError("Could not invoke ctx.llm with any known signature.")
+    text = getattr(result, "text", None)
+    if isinstance(text, str):
+        return text
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for key in ("text", "content", "output", "response"):
+            value = result.get(key)
+            if isinstance(value, str):
+                return value
+    raise ChapterError(f"Unexpected ctx.llm.complete() return type: {type(result).__name__}")
 
 
 def _ask_llm_for_chapters(

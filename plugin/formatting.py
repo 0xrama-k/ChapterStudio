@@ -32,14 +32,19 @@ class FormatResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def _coerce(raw: Iterable[dict | Chapter]) -> list[Chapter]:
+def _coerce(raw: Iterable) -> list[Chapter]:
+    """Accept Chapter, ChapterCandidate (from chapters.py), or plain dicts."""
     out: list[Chapter] = []
     for c in raw:
         if isinstance(c, Chapter):
             out.append(c)
             continue
-        start = int(round(float(c["start_seconds"])))
-        title = str(c["title"]).strip()
+        if hasattr(c, "start_seconds") and hasattr(c, "title"):
+            start = int(round(float(c.start_seconds)))
+            title = str(c.title).strip()
+        else:
+            start = int(round(float(c["start_seconds"])))
+            title = str(c["title"]).strip()
         if not title:
             continue
         out.append(Chapter(start_seconds=max(0, start), title=title))
