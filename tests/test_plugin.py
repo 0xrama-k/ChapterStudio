@@ -9,9 +9,10 @@ from plugin.chapters import (
     VideoMetadata,
     _ask_llm_for_chapters,
     _build_prompt,
+    _flatten_segments,
 )
 from plugin.formatting import to_youtube_chapters
-from plugin.transcript import _friendly_download_error, _try_youtube_captions
+from plugin.transcript import Segment, _friendly_download_error, _try_youtube_captions
 
 
 class TranscriptTests(unittest.TestCase):
@@ -91,6 +92,21 @@ class TranscriptTests(unittest.TestCase):
 
 
 class ChapterTests(unittest.TestCase):
+    def test_flatten_segments_removes_rolling_caption_overlap(self):
+        flattened = _flatten_segments(
+            [
+                Segment(0, 2, "Today we configure the database connection"),
+                Segment(2, 4, "the database connection and create the schema"),
+                Segment(4, 6, "and create the schema"),
+            ]
+        )
+
+        self.assertEqual(
+            flattened,
+            "[0s] Today we configure the database connection\n"
+            "[2s] and create the schema",
+        )
+
     def test_chunk_prompt_uses_chunk_duration(self):
         prompt = _build_prompt(
             "[600s] first\n[660s] second",

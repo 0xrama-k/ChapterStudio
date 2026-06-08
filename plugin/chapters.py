@@ -100,9 +100,29 @@ def chapters_from_metadata(video_id: str) -> Optional[list[ChapterCandidate]]:
 # ---------------------------------------------------------------------------
 
 
+def _remove_repeated_prefix(previous: str, current: str) -> str:
+    """Remove caption text repeated from the end of the previous segment."""
+    previous_words = previous.split()
+    current_words = current.split()
+    max_overlap = min(len(previous_words), len(current_words), 30)
+    for size in range(max_overlap, 2, -1):
+        previous_tail = [word.casefold() for word in previous_words[-size:]]
+        current_head = [word.casefold() for word in current_words[:size]]
+        if previous_tail == current_head:
+            return " ".join(current_words[size:]).strip()
+    return current.strip()
+
+
 def _flatten_segments(segments: list[Segment]) -> str:
-    """One line per segment: `[125s] text`."""
-    return "\n".join(f"[{int(s.start)}s] {s.text}" for s in segments)
+    """One line per segment, dropping repeated rolling-caption prefixes."""
+    lines: list[str] = []
+    previous_text = ""
+    for segment in segments:
+        text = _remove_repeated_prefix(previous_text, segment.text.strip())
+        if text:
+            lines.append(f"[{int(segment.start)}s] {text}")
+        previous_text = segment.text.strip()
+    return "\n".join(lines)
 
 
 def _chunk_text(text: str, max_chars: int) -> list[str]:
