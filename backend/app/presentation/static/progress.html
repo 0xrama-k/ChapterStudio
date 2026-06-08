@@ -3,65 +3,297 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Generating YouTube Chapters</title>
+  <title>Creating YouTube Chapters</title>
   <style>
-    :root { font-family: Inter, system-ui, sans-serif; color: #18181b; background: #f5f5f7; }
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #09090b;
+      color: #fafafa;
+      font-synthesis: none;
+    }
+
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top left, #fee2e2, transparent 34rem), #f5f5f7; }
-    main { width: min(760px, 100%); background: white; border: 1px solid #e4e4e7; border-radius: 20px; padding: clamp(24px, 5vw, 48px); box-shadow: 0 20px 55px rgba(24, 24, 27, .08); }
-    h1 { margin: 0 0 8px; font-size: clamp(2rem, 6vw, 3.5rem); letter-spacing: -.055em; }
-    .lead { color: #52525b; margin: 0 0 28px; }
-    .loader { width: 52px; height: 52px; border: 5px solid #fee2e2; border-top-color: #dc2626; border-radius: 50%; animation: spin .8s linear infinite; margin-bottom: 22px; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 20% 0%, rgba(239, 68, 68, 0.18), transparent 32rem),
+        radial-gradient(circle at 90% 90%, rgba(234, 88, 12, 0.12), transparent 32rem),
+        #09090b;
+    }
+
+    body::before {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      content: "";
+      opacity: 0.22;
+      background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: linear-gradient(to bottom, black, transparent 78%);
+    }
+
+    main {
+      position: relative;
+      width: min(720px, 100%);
+      padding: clamp(24px, 5vw, 46px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 28px;
+      background: linear-gradient(145deg, rgba(39, 39, 42, 0.88), rgba(24, 24, 27, 0.76));
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(20px);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 38px;
+      color: #d4d4d8;
+      font-size: 0.75rem;
+      font-weight: 750;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #ef4444;
+      box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
+    }
+
+    .brand-mark::after {
+      content: "";
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 7px solid white;
+      margin-left: 2px;
+    }
+
+    .heading-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 30px;
+    }
+
+    .loader {
+      width: 48px;
+      height: 48px;
+      flex: none;
+      border: 4px solid rgba(239, 68, 68, 0.18);
+      border-top-color: #ef4444;
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+
     @keyframes spin { to { transform: rotate(360deg); } }
-    .steps { list-style: none; padding: 0; margin: 0 0 28px; display: grid; gap: 12px; }
-    .step { display: flex; gap: 12px; align-items: center; padding: 13px 14px; border: 1px solid #e4e4e7; border-radius: 10px; color: #71717a; }
-    .step::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: #d4d4d8; flex: none; }
-    .step.active { color: #18181b; border-color: #fca5a5; background: #fff7f7; }
-    .step.active::before { background: #dc2626; animation: pulse 1s ease-in-out infinite; }
-    .step.done::before { background: #16a34a; }
-    @keyframes pulse { 50% { transform: scale(1.5); opacity: .55; } }
-    #error { display: none; color: #b91c1c; background: #fef2f2; padding: 14px; border-radius: 10px; }
+
+    h1 {
+      margin: 0 0 5px;
+      font-size: clamp(2rem, 6vw, 3.2rem);
+      line-height: 1;
+      letter-spacing: -0.06em;
+    }
+
+    .lead {
+      margin: 0;
+      color: #a1a1aa;
+      font-size: 0.9rem;
+    }
+
+    .steps {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .step {
+      position: relative;
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      min-height: 48px;
+      padding: 9px 13px;
+      border-radius: 12px;
+      color: #71717a;
+      font-size: 0.88rem;
+      font-weight: 600;
+      transition: color 180ms ease, background 180ms ease;
+    }
+
+    .step::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border: 2px solid #52525b;
+      border-radius: 50%;
+      flex: none;
+      transition: background 180ms ease, border-color 180ms ease;
+    }
+
+    .step.active {
+      color: #fafafa;
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .step.active::before {
+      border-color: #ef4444;
+      background: #ef4444;
+      box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.13), 0 0 18px rgba(239, 68, 68, 0.65);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    .step.done { color: #a1a1aa; }
+
+    .step.done::before {
+      border-color: #22c55e;
+      background: #22c55e;
+    }
+
+    @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.04), 0 0 22px rgba(239, 68, 68, 0.75); } }
+
+    #error {
+      display: none;
+      margin: 0;
+      padding: 16px;
+      border: 1px solid rgba(239, 68, 68, 0.24);
+      border-radius: 12px;
+      background: rgba(127, 29, 29, 0.22);
+      color: #fca5a5;
+      line-height: 1.55;
+    }
+
     #result { display: none; }
-    textarea { width: 100%; min-height: 260px; resize: vertical; border: 1px solid #d4d4d8; border-radius: 10px; padding: 14px; font: 1rem/1.65 Consolas, monospace; }
-    button, a { display: inline-block; border: 0; border-radius: 10px; padding: 12px 18px; background: #27272a; color: white; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; margin: 12px 8px 0 0; }
-    .meta { color: #71717a; font-size: .9rem; }
+
+    #result h1 { margin-bottom: 12px; }
+
+    .result-lead {
+      margin: 0 0 24px;
+      color: #a1a1aa;
+      line-height: 1.6;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 280px;
+      resize: vertical;
+      border: 1px solid #3f3f46;
+      border-radius: 14px;
+      padding: 16px;
+      background: rgba(9, 9, 11, 0.58);
+      color: #e4e4e7;
+      font: 0.92rem/1.7 "SFMono-Regular", Consolas, monospace;
+    }
+
+    .meta {
+      margin: 12px 0 0;
+      color: #71717a;
+      font-size: 0.78rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    button, a {
+      min-height: 48px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 18px;
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      color: white;
+      font: inherit;
+      font-weight: 750;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    a {
+      border: 1px solid #3f3f46;
+      background: transparent;
+      color: #d4d4d8;
+    }
+
+    @media (max-width: 520px) {
+      .heading-row { align-items: flex-start; }
+      .actions { flex-direction: column; }
+    }
   </style>
 </head>
 <body>
   <main>
+    <div class="brand"><span class="brand-mark"></span> Chapter Studio</div>
+
     <div id="working">
-      <div class="loader"></div>
-      <h1>Creating chapters</h1>
-      <p id="message" class="lead">Waiting to start</p>
+      <div class="heading-row">
+        <div class="loader"></div>
+        <div>
+          <h1>Creating chapters</h1>
+          <p id="message" class="lead">Getting everything ready...</p>
+        </div>
+      </div>
       <ol class="steps">
-        <li class="step" data-stage="validating">Validate video ID</li>
-        <li class="step" data-stage="metadata">Check video metadata</li>
-        <li class="step" data-stage="captions">Look for captions</li>
-        <li class="step" data-stage="downloading">Download audio</li>
-        <li class="step" data-stage="transcribing">Transcribe with Whisper</li>
-        <li class="step" data-stage="generating">Generate chapter titles</li>
-        <li class="step" data-stage="formatting">Format chapter markers</li>
+        <li class="step" data-stage="validating">Checking the video</li>
+        <li class="step" data-stage="metadata">Reading video details</li>
+        <li class="step" data-stage="captions">Finding the spoken content</li>
+        <li class="step" data-stage="downloading">Preparing the audio</li>
+        <li class="step" data-stage="transcribing">Turning speech into text</li>
+        <li class="step" data-stage="generating">Writing clear chapter titles</li>
+        <li class="step" data-stage="formatting">Preparing your chapter list</li>
       </ol>
     </div>
+
     <p id="error"></p>
+
     <section id="result">
       <h1>Chapters ready</h1>
+      <p class="result-lead">Copy these chapter markers into your YouTube video description.</p>
       <textarea id="chapters" readonly></textarea>
       <p id="meta" class="meta"></p>
-      <button id="copy" type="button">Copy chapters</button>
-      <a href="/">Create another</a>
+      <div class="actions">
+        <button id="copy" type="button">Copy chapters</button>
+        <a href="/">Create another</a>
+      </div>
     </section>
   </main>
+
   <script>
     const jobId = location.pathname.split("/").filter(Boolean).pop();
     const stages = ["validating", "metadata", "captions", "downloading", "transcribing", "generating", "formatting"];
+    const friendlyMessages = {
+      validating: "Checking the video...",
+      metadata: "Reading video details...",
+      captions: "Finding the spoken content...",
+      downloading: "Preparing the audio...",
+      transcribing: "Turning speech into text...",
+      generating: "Writing clear chapter titles...",
+      formatting: "Preparing your chapter list..."
+    };
     const working = document.querySelector("#working");
     const errorBox = document.querySelector("#error");
     const result = document.querySelector("#result");
     const chapters = document.querySelector("#chapters");
 
-    function showStage(stage, text) {
-      document.querySelector("#message").textContent = text;
+    function showStage(stage) {
+      document.querySelector("#message").textContent = friendlyMessages[stage] || "Creating your chapters...";
       const current = stages.indexOf(stage);
       document.querySelectorAll(".step").forEach((element) => {
         const index = stages.indexOf(element.dataset.stage);
@@ -74,11 +306,11 @@
         const response = await fetch(`/api/v1/chapter-jobs/${jobId}`);
         const job = await response.json();
         if (!response.ok) throw new Error(job.detail || "Could not load job.");
-        showStage(job.stage, job.message);
+        showStage(job.stage);
         if (job.status === "completed") {
           working.style.display = "none";
           chapters.value = job.result.chapters_text;
-          document.querySelector("#meta").textContent = `${job.result.chapter_count} chapters | ${job.result.chapter_source} | transcript: ${job.result.transcript_source}`;
+          document.querySelector("#meta").textContent = `${job.result.chapter_count} chapters generated`;
           result.style.display = "block";
           return;
         }
@@ -100,6 +332,7 @@
       await navigator.clipboard.writeText(chapters.value);
       event.target.textContent = "Copied";
     });
+
     poll();
   </script>
 </body>

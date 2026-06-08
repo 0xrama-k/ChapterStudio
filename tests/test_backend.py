@@ -111,6 +111,8 @@ class ApiTests(unittest.TestCase):
 
         self.assertIn('id="chapter-form"', content)
         self.assertIn('fetch("/api/v1/chapter-jobs"', content)
+        self.assertNotIn('id="whisper-model"', content)
+        self.assertNotIn('id="prefer-whisper"', content)
 
     def test_background_job_completes_and_returns_result(self):
         class FakeService:
