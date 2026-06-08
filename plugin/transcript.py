@@ -17,7 +17,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,10 @@ def _try_youtube_captions(video_id: str) -> Optional[TranscriptResult]:
         return None
 
     try:
-        listing = YouTubeTranscriptApi.list_transcripts(video_id)
+        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
+            listing = YouTubeTranscriptApi.list_transcripts(video_id)
+        else:
+            listing = YouTubeTranscriptApi().list(video_id)
     except (TranscriptsDisabled, NoTranscriptFound):
         return None
     except VideoUnavailable as e:
@@ -84,30 +87,42 @@ def _try_youtube_captions(video_id: str) -> Optional[TranscriptResult]:
     for kind, group, source in (("manual", manual, "manual"), ("auto", auto, "auto")):
         if not group:
             continue
-        chosen = group[0]
-        try:
-            raw = chosen.fetch()
-        except Exception as e:
-            log.info("Fetching %s captions failed (%s); trying next.", kind, e)
-            continue
-        segs = [
-            Segment(
-                start=float(item["start"]),
-                end=float(item["start"]) + float(item.get("duration", 0.0)),
-                text=str(item["text"]).strip(),
+        for chosen in group:
+            try:
+                raw = chosen.fetch()
+            except Exception as e:
+                log.info("Fetching %s captions failed (%s); trying next.", kind, e)
+                continue
+            raw_items = getattr(raw, "snippets", raw)
+            segs: list[Segment] = []
+            for item in raw_items:
+                if isinstance(item, dict):
+                    start = item.get("start", 0.0)
+                    item_duration = item.get("duration", 0.0)
+                    text = item.get("text", "")
+                else:
+                    start = getattr(item, "start", 0.0)
+                    item_duration = getattr(item, "duration", 0.0)
+                    text = getattr(item, "text", "")
+                text = str(text).strip()
+                if text:
+                    start = float(start)
+                    segs.append(
+                        Segment(
+                            start=start,
+                            end=start + float(item_duration),
+                            text=text,
+                        )
+                    )
+            if not segs:
+                continue
+            duration = max(s.end for s in segs)
+            return TranscriptResult(
+                segments=segs,
+                source=source,
+                language=getattr(chosen, "language_code", "unknown"),
+                duration_seconds=duration,
             )
-            for item in raw
-            if str(item.get("text", "")).strip()
-        ]
-        if not segs:
-            continue
-        duration = max(s.end for s in segs)
-        return TranscriptResult(
-            segments=segs,
-            source=source,
-            language=getattr(chosen, "language_code", "unknown"),
-            duration_seconds=duration,
-        )
     return None
 
 
@@ -132,9 +147,9 @@ def _download_audio(video_id: str, dest_dir: str) -> tuple[str, float]:
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(url, download=True) or {}
     except Exception as e:
-        raise TranscriptError(f"Could not download audio: {e}") from e
+        raise TranscriptError(f"Could not download audio: {_friendly_download_error(e)}") from e
 
     filepath = None
     for fn in os.listdir(dest_dir):
@@ -146,6 +161,19 @@ def _download_audio(video_id: str, dest_dir: str) -> tuple[str, float]:
 
     duration = float(info.get("duration") or 0.0)
     return filepath, duration
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\[[0-9;]*m")
+
+
+def _friendly_download_error(error: Exception) -> str:
+    message = _ANSI_RE.sub("", str(error)).strip()
+    if "Failed to resolve" in message or "getaddrinfo failed" in message:
+        return (
+            "Could not reach YouTube because DNS resolution failed. "
+            "Check internet connection, DNS, VPN/proxy, firewall, or retry in a moment."
+        )
+    return message
 
 
 def _transcribe_whisper(
@@ -171,13 +199,22 @@ def _transcribe_whisper(
     except (RuntimeError, OSError) as e:
         # CUDA/cuBLAS not installed or fails to load — fall back to CPU.
         log.warning("Whisper GPU init failed (%s); retrying on CPU.", e)
-        model = WhisperModel(model_name, device="cpu", compute_type="int8")
-        segments_iter, info = model.transcribe(audio_path, vad_filter=True)
-    segs = [
-        Segment(start=float(s.start or 0.0), end=float(s.end or 0.0), text=s.text.strip())
-        for s in segments_iter
-        if (s.text or "").strip()
-    ]
+        try:
+            model = WhisperModel(model_name, device="cpu", compute_type="int8")
+            segments_iter, info = model.transcribe(audio_path, vad_filter=True)
+        except Exception as cpu_error:
+            raise TranscriptError(f"Whisper transcription failed on CPU: {cpu_error}") from cpu_error
+    except Exception as e:
+        raise TranscriptError(f"Whisper transcription failed: {e}") from e
+
+    try:
+        segs = [
+            Segment(start=float(s.start or 0.0), end=float(s.end or 0.0), text=s.text.strip())
+            for s in segments_iter
+            if (s.text or "").strip()
+        ]
+    except Exception as e:
+        raise TranscriptError(f"Whisper failed while decoding audio: {e}") from e
     return segs, getattr(info, "language", "unknown") or "unknown"
 
 
@@ -186,6 +223,7 @@ def get_transcript(
     *,
     prefer_whisper: bool = False,
     whisper_model: str = "small",
+    progress: Optional[Callable[[str, str], None]] = None,
 ) -> TranscriptResult:
     """Get a transcript via the tiered fallback chain.
 
@@ -194,6 +232,8 @@ def get_transcript(
     video_id = extract_video_id(video_id)
 
     if not prefer_whisper:
+        if progress:
+            progress("captions", "Looking for manual or automatic YouTube captions")
         result = _try_youtube_captions(video_id)
         if result is not None:
             return result
@@ -201,7 +241,11 @@ def get_transcript(
 
     tmpdir = tempfile.mkdtemp(prefix="hermes-yt-")
     try:
+        if progress:
+            progress("downloading", "Downloading the audio-only stream from YouTube")
         audio_path, duration = _download_audio(video_id, tmpdir)
+        if progress:
+            progress("transcribing", f"Transcribing audio locally with Whisper ({whisper_model})")
         segs, language = _transcribe_whisper(audio_path, whisper_model, duration)
         if not segs:
             raise TranscriptError("Whisper produced no segments (audio may be silent or unreadable).")

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .chapters import ChapterError, pick_chapters
+from .chapters import ChapterError, generate_chapters, get_video_metadata
 from .formatting import to_youtube_chapters
 from .transcript import TranscriptError, extract_video_id, get_transcript
 
@@ -49,6 +49,33 @@ def handle_youtube_generate_chapters(args: dict, **kw) -> str:
     regenerate = bool(args.get("regenerate") or False)
     title_language = str(args.get("title_language") or "auto")
 
+    try:
+        video_id = extract_video_id(url)
+    except ValueError as e:
+        return tool_error(str(e))
+
+    notices: list[str] = []
+    metadata = get_video_metadata(video_id)
+    if metadata.chapters and not regenerate:
+        formatted = to_youtube_chapters(metadata.chapters, metadata.duration_seconds)
+        notices.append(
+            "This video already has chapters; using them directly. "
+            "Call again with `regenerate=true` to produce new ones via the LLM."
+        )
+        return tool_result(
+            success=True,
+            video_id=video_id,
+            transcript_source="not_required",
+            transcript_source_label="not required",
+            transcript_language="unknown",
+            duration_seconds=metadata.duration_seconds,
+            chapter_source="existing",
+            chapter_count=len(formatted.chapters),
+            chapters_text=formatted.text,
+            warnings=formatted.warnings,
+            notices=notices,
+        )
+
     ctx = _resolve_ctx(kw)
     if ctx is None or not hasattr(ctx, "llm"):
         return tool_error(
@@ -56,12 +83,6 @@ def handle_youtube_generate_chapters(args: dict, **kw) -> str:
             "Hermes >=0.14 is required."
         )
 
-    try:
-        video_id = extract_video_id(url)
-    except ValueError as e:
-        return tool_error(str(e))
-
-    notices: list[str] = []
     if prefer_whisper:
         notices.append(
             "Skipping YouTube captions; downloading audio and transcribing locally with Whisper. "
@@ -87,24 +108,17 @@ def handle_youtube_generate_chapters(args: dict, **kw) -> str:
         )
 
     try:
-        chapters, chapter_source = pick_chapters(
+        duration_seconds = metadata.duration_seconds or transcript.duration_seconds
+        chapters = generate_chapters(
             ctx,
-            video_id=video_id,
-            segments=transcript.segments,
-            duration_seconds=transcript.duration_seconds,
-            regenerate=regenerate,
+            transcript.segments,
+            duration_seconds=duration_seconds,
             title_language=title_language,
         )
     except ChapterError as e:
         return tool_error(f"Chapter generation failed: {e}")
 
-    if chapter_source == "existing" and not regenerate:
-        notices.append(
-            "This video already has chapters; using them directly. "
-            "Call again with `regenerate=true` to produce new ones via the LLM."
-        )
-
-    formatted = to_youtube_chapters(chapters, transcript.duration_seconds)
+    formatted = to_youtube_chapters(chapters, duration_seconds)
 
     return tool_result(
         success=True,
@@ -112,8 +126,8 @@ def handle_youtube_generate_chapters(args: dict, **kw) -> str:
         transcript_source=transcript.source,
         transcript_source_label=_SOURCE_LABEL.get(transcript.source, transcript.source),
         transcript_language=transcript.language,
-        duration_seconds=transcript.duration_seconds,
-        chapter_source=chapter_source,
+        duration_seconds=duration_seconds,
+        chapter_source="llm",
         chapter_count=len(formatted.chapters),
         chapters_text=formatted.text,
         warnings=formatted.warnings,

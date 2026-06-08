@@ -19,7 +19,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from .transcript import Segment
 
@@ -39,39 +39,60 @@ class ChapterCandidate:
     title: str
 
 
+@dataclass
+class VideoMetadata:
+    chapters: list[ChapterCandidate]
+    duration_seconds: float
+
+
 # ---------------------------------------------------------------------------
 # Strategy A — existing video chapters from yt-dlp metadata
 # ---------------------------------------------------------------------------
 
 
-def chapters_from_metadata(video_id: str) -> Optional[list[ChapterCandidate]]:
-    """Return the video's own chapters if any, else None. Never raises on missing metadata."""
+def get_video_metadata(video_id: str) -> VideoMetadata:
+    """Return useful video metadata. Never raises when metadata is unavailable."""
     try:
         import yt_dlp  # type: ignore
     except ImportError:
-        return None
+        return VideoMetadata(chapters=[], duration_seconds=0.0)
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(url, download=False) or {}
     except Exception as e:
         log.info("yt-dlp metadata lookup failed (%s); skipping deterministic path.", e)
-        return None
+        return VideoMetadata(chapters=[], duration_seconds=0.0)
 
     raw = info.get("chapters") or []
-    if not raw:
-        return None
-
     out: list[ChapterCandidate] = []
     for c in raw:
+        if not isinstance(c, dict):
+            continue
         start = c.get("start_time")
         title = c.get("title")
         if start is None or not title:
             continue
-        out.append(ChapterCandidate(start_seconds=int(round(float(start))), title=str(title).strip()))
-    return out or None
+        try:
+            start_seconds = int(round(float(start)))
+        except (TypeError, ValueError):
+            continue
+        out.append(ChapterCandidate(start_seconds=start_seconds, title=str(title).strip()))
+    try:
+        duration_seconds = float(info.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        duration_seconds = 0.0
+    return VideoMetadata(
+        chapters=out,
+        duration_seconds=duration_seconds,
+    )
+
+
+def chapters_from_metadata(video_id: str) -> Optional[list[ChapterCandidate]]:
+    """Return the video's own chapters if any, else None."""
+    return get_video_metadata(video_id).chapters or None
 
 
 # ---------------------------------------------------------------------------
@@ -104,11 +125,18 @@ def _chunk_text(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
-def _chapter_density_hint(duration_seconds: float) -> str:
+def _chapter_density_hint(duration_seconds: float, minimum: int = 3) -> str:
     minutes = max(1.0, duration_seconds / 60.0)
-    low = max(3, int(round(minutes / 10 * 3)))
+    low = max(minimum, int(round(minutes / 10 * 3)))
     high = max(low + 1, int(round(minutes / 10 * 6)))
     return f"{low}-{high}"
+
+
+def _chunk_duration(flattened: str, fallback: float) -> float:
+    timestamps = [int(value) for value in re.findall(r"^\[(\d+)s\]", flattened, re.MULTILINE)]
+    if len(timestamps) >= 2:
+        return max(60.0, float(timestamps[-1] - timestamps[0]))
+    return fallback
 
 
 def _build_prompt(
@@ -123,7 +151,8 @@ def _build_prompt(
         if title_language == "auto"
         else f"Write titles in {title_language}."
     )
-    density = _chapter_density_hint(duration_seconds)
+    prompt_duration = _chunk_duration(flattened, duration_seconds) if is_chunk else duration_seconds
+    density = _chapter_density_hint(prompt_duration, minimum=1 if is_chunk else 3)
     scope = (
         "This is one CHUNK of a longer transcript; propose chapters only for the time range it covers."
         if is_chunk
@@ -139,7 +168,7 @@ Transcript (each line: `[<seconds>s] text`):
 Rules:
 - Start a new chapter at meaningful topic or subtopic shifts.
 - Give each chapter a SPECIFIC, content-reflecting title (e.g. "Setting up the PostgreSQL connection"). Generic titles like "Chapter 2" or "Part one" are FORBIDDEN.
-- Aim for roughly {density} chapters total based on the video length (~{int(duration_seconds)}s).
+- Aim for roughly {density} chapters for the supplied transcript range (~{int(prompt_duration)}s).
 - {scope}
 - {lang_clause}
 - `start_seconds` MUST be an integer that exists in the transcript timestamps (or very near one).
@@ -244,6 +273,8 @@ def _ask_llm_for_chapters(
             continue
         if title:
             out.append(ChapterCandidate(start_seconds=max(0, start), title=title))
+    if not out:
+        raise ChapterError("Model returned no valid chapter objects.")
     return out
 
 

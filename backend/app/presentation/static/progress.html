@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generating YouTube Chapters</title>
+  <style>
+    :root { font-family: Inter, system-ui, sans-serif; color: #18181b; background: #f5f5f7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top left, #fee2e2, transparent 34rem), #f5f5f7; }
+    main { width: min(760px, 100%); background: white; border: 1px solid #e4e4e7; border-radius: 20px; padding: clamp(24px, 5vw, 48px); box-shadow: 0 20px 55px rgba(24, 24, 27, .08); }
+    h1 { margin: 0 0 8px; font-size: clamp(2rem, 6vw, 3.5rem); letter-spacing: -.055em; }
+    .lead { color: #52525b; margin: 0 0 28px; }
+    .loader { width: 52px; height: 52px; border: 5px solid #fee2e2; border-top-color: #dc2626; border-radius: 50%; animation: spin .8s linear infinite; margin-bottom: 22px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .steps { list-style: none; padding: 0; margin: 0 0 28px; display: grid; gap: 12px; }
+    .step { display: flex; gap: 12px; align-items: center; padding: 13px 14px; border: 1px solid #e4e4e7; border-radius: 10px; color: #71717a; }
+    .step::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: #d4d4d8; flex: none; }
+    .step.active { color: #18181b; border-color: #fca5a5; background: #fff7f7; }
+    .step.active::before { background: #dc2626; animation: pulse 1s ease-in-out infinite; }
+    .step.done::before { background: #16a34a; }
+    @keyframes pulse { 50% { transform: scale(1.5); opacity: .55; } }
+    #error { display: none; color: #b91c1c; background: #fef2f2; padding: 14px; border-radius: 10px; }
+    #result { display: none; }
+    textarea { width: 100%; min-height: 260px; resize: vertical; border: 1px solid #d4d4d8; border-radius: 10px; padding: 14px; font: 1rem/1.65 Consolas, monospace; }
+    button, a { display: inline-block; border: 0; border-radius: 10px; padding: 12px 18px; background: #27272a; color: white; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; margin: 12px 8px 0 0; }
+    .meta { color: #71717a; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="working">
+      <div class="loader"></div>
+      <h1>Creating chapters</h1>
+      <p id="message" class="lead">Waiting to start</p>
+      <ol class="steps">
+        <li class="step" data-stage="validating">Validate video ID</li>
+        <li class="step" data-stage="metadata">Check video metadata</li>
+        <li class="step" data-stage="captions">Look for captions</li>
+        <li class="step" data-stage="downloading">Download audio</li>
+        <li class="step" data-stage="transcribing">Transcribe with Whisper</li>
+        <li class="step" data-stage="generating">Generate chapter titles</li>
+        <li class="step" data-stage="formatting">Format chapter markers</li>
+      </ol>
+    </div>
+    <p id="error"></p>
+    <section id="result">
+      <h1>Chapters ready</h1>
+      <textarea id="chapters" readonly></textarea>
+      <p id="meta" class="meta"></p>
+      <button id="copy" type="button">Copy chapters</button>
+      <a href="/">Create another</a>
+    </section>
+  </main>
+  <script>
+    const jobId = location.pathname.split("/").filter(Boolean).pop();
+    const stages = ["validating", "metadata", "captions", "downloading", "transcribing", "generating", "formatting"];
+    const working = document.querySelector("#working");
+    const errorBox = document.querySelector("#error");
+    const result = document.querySelector("#result");
+    const chapters = document.querySelector("#chapters");
+
+    function showStage(stage, text) {
+      document.querySelector("#message").textContent = text;
+      const current = stages.indexOf(stage);
+      document.querySelectorAll(".step").forEach((element) => {
+        const index = stages.indexOf(element.dataset.stage);
+        element.className = `step ${index < current ? "done" : index === current ? "active" : ""}`;
+      });
+    }
+
+    async function poll() {
+      try {
+        const response = await fetch(`/api/v1/chapter-jobs/${jobId}`);
+        const job = await response.json();
+        if (!response.ok) throw new Error(job.detail || "Could not load job.");
+        showStage(job.stage, job.message);
+        if (job.status === "completed") {
+          working.style.display = "none";
+          chapters.value = job.result.chapters_text;
+          document.querySelector("#meta").textContent = `${job.result.chapter_count} chapters | ${job.result.chapter_source} | transcript: ${job.result.transcript_source}`;
+          result.style.display = "block";
+          return;
+        }
+        if (job.status === "failed") {
+          working.style.display = "none";
+          errorBox.textContent = job.error;
+          errorBox.style.display = "block";
+          return;
+        }
+        setTimeout(poll, 1000);
+      } catch (error) {
+        working.style.display = "none";
+        errorBox.textContent = error.message;
+        errorBox.style.display = "block";
+      }
+    }
+
+    document.querySelector("#copy").addEventListener("click", async (event) => {
+      await navigator.clipboard.writeText(chapters.value);
+      event.target.textContent = "Copied";
+    });
+    poll();
+  </script>
+</body>
+</html>

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Chapter Generator</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f7;
+      color: #18181b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at top left, #fee2e2, transparent 34rem),
+        #f5f5f7;
+    }
+
+    main {
+      width: min(760px, 100%);
+      background: white;
+      border: 1px solid #e4e4e7;
+      border-radius: 20px;
+      padding: clamp(24px, 5vw, 48px);
+      box-shadow: 0 20px 55px rgba(24, 24, 27, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 6vw, 3.5rem);
+      line-height: 1;
+      letter-spacing: -0.055em;
+    }
+
+    .intro {
+      color: #52525b;
+      margin: 0 0 28px;
+      line-height: 1.6;
+    }
+
+    label {
+      display: block;
+      font-weight: 650;
+      margin-bottom: 8px;
+    }
+
+    input[type="text"], select, textarea {
+      width: 100%;
+      border: 1px solid #d4d4d8;
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: white;
+      color: inherit;
+      font: inherit;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: 3px solid #fecaca;
+      border-color: #ef4444;
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 20px 0;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 500;
+      margin: 0;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 18px;
+      background: #dc2626;
+      color: white;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover { background: #b91c1c; }
+    button:disabled { cursor: wait; opacity: 0.6; }
+
+    .secondary {
+      background: #27272a;
+    }
+
+    .secondary:hover { background: #09090b; }
+
+    #status {
+      min-height: 24px;
+      margin: 18px 0 0;
+      color: #52525b;
+    }
+
+    #status.error { color: #b91c1c; }
+
+    #result {
+      display: none;
+      margin-top: 24px;
+      border-top: 1px solid #e4e4e7;
+      padding-top: 24px;
+    }
+
+    .result-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    .result-head h2 { margin: 0; }
+
+    textarea {
+      min-height: 260px;
+      resize: vertical;
+      line-height: 1.65;
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+
+    .meta {
+      color: #71717a;
+      font-size: 0.9rem;
+      margin-top: 10px;
+    }
+
+    @media (max-width: 600px) {
+      .options { grid-template-columns: 1fr; }
+      .result-head { align-items: stretch; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>YouTube chapters</h1>
+    <p class="intro">Paste a YouTube link or video ID and receive chapter markers ready for the video description.</p>
+
+    <form id="chapter-form">
+      <label for="video">YouTube link or video ID</label>
+      <input id="video" type="text" placeholder="https://youtube.com/watch?v=arj7oStGLkU" required>
+
+      <div class="options">
+        <div>
+          <label for="language">Chapter title language</label>
+          <input id="language" type="text" value="auto" placeholder="auto, English, Turkish">
+        </div>
+        <div>
+          <label for="whisper-model">Whisper model</label>
+          <select id="whisper-model">
+            <option>tiny</option>
+            <option>base</option>
+            <option selected>small</option>
+            <option>medium</option>
+            <option>large-v3</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="options">
+        <label class="check"><input id="regenerate" type="checkbox"> Regenerate existing chapters</label>
+        <label class="check"><input id="prefer-whisper" type="checkbox"> Force local Whisper</label>
+      </div>
+
+      <button id="submit" type="submit">Create chapters</button>
+    </form>
+
+    <p id="status" aria-live="polite"></p>
+
+  </main>
+
+  <script>
+    const form = document.querySelector("#chapter-form");
+    const submit = document.querySelector("#submit");
+    const status = document.querySelector("#status");
+
+    function extractVideoId(value) {
+      const trimmed = value.trim();
+      if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
+
+      try {
+        const url = new URL(trimmed);
+        if (url.hostname.includes("youtu.be")) return url.pathname.split("/").filter(Boolean)[0] || "";
+        if (url.pathname.startsWith("/shorts/") || url.pathname.startsWith("/embed/")) {
+          return url.pathname.split("/")[2] || "";
+        }
+        return url.searchParams.get("v") || "";
+      } catch {
+        return "";
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const videoId = extractVideoId(document.querySelector("#video").value);
+      if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+        status.textContent = "Enter a valid YouTube link or 11-character video ID.";
+        status.className = "error";
+        return;
+      }
+
+      submit.disabled = true;
+      status.className = "";
+      status.textContent = "Starting chapter generation...";
+
+      const payload = {
+        video_id: videoId,
+        regenerate: document.querySelector("#regenerate").checked,
+        prefer_whisper: document.querySelector("#prefer-whisper").checked,
+        whisper_model: document.querySelector("#whisper-model").value,
+        title_language: document.querySelector("#language").value.trim() || "auto"
+      };
+
+      try {
+        const response = await fetch("/api/v1/chapter-jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || "Chapter generation failed.");
+
+        window.location.href = body.view_url;
+      } catch (error) {
+        status.className = "error";
+        status.textContent = error.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+  </script>
+</body>
+</html>
