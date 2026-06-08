@@ -1,8 +1,8 @@
 # YouTube Chapters Backend
 
-Standalone FastAPI backend for generating chapter text from an 11-character YouTube
-video ID. It uses the existing transcript, chapter-generation, and formatting code,
-but does not require Hermes.
+FastAPI backend for generating chapter text from an 11-character YouTube video ID.
+It owns the transcript, chapter-generation, formatting, and LLM integration code used
+by the ChapterStudio website.
 
 ## Architecture
 

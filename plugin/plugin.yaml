@@ -1,7 +1,0 @@
-name: youtube-chapters
-version: 0.1.0
-description: "Generate YouTube chapter markers (timestamped table of contents) for a video URL. Pulls captions or transcribes locally with Whisper, then uses the Hermes-configured LLM to title each chapter."
-author: hermes-youtube-chapters
-kind: standalone
-provides_tools:
-  - youtube_generate_chapters

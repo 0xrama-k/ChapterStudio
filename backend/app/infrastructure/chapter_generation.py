@@ -6,11 +6,11 @@ A. Deterministic: if the video already has YouTube chapters (yt-dlp metadata's
    `chapters` field), use them directly. No LLM call needed.
 
 B. LLM-based: flatten the transcript into a single timestamped text, chunk if
-   needed, and ask `ctx.llm` to return strict JSON of {start_seconds, title}.
+   needed, and ask the configured LLM to return strict JSON of {start_seconds, title}.
    Retry once if the response isn't parseable JSON.
 
 The LLM call is funneled through `_call_llm(ctx, prompt)` so the exact
-signature of `ctx.llm` is easy to adjust in one place.
+client signature is easy to adjust in one place.
 """
 
 from __future__ import annotations
@@ -221,7 +221,7 @@ def _parse_json_array(text: str) -> list[dict]:
 
 
 def _call_llm(ctx: Any, prompt: str) -> str:
-    """Funnel point for the Hermes ``ctx.llm`` call.
+    """Funnel point for the configured ``ctx.llm`` call.
 
     Uses the documented :class:`agent.plugin_llm.PluginLlm` surface:
     ``ctx.llm.complete(messages=...).text``. Kept in one place so it's easy
@@ -229,11 +229,11 @@ def _call_llm(ctx: Any, prompt: str) -> str:
     """
     llm = getattr(ctx, "llm", None)
     if llm is None:
-        raise ChapterError("Hermes context has no `llm` attribute; cannot call the model.")
+        raise ChapterError("LLM context has no `llm` attribute; cannot call the model.")
 
     complete = getattr(llm, "complete", None)
     if not callable(complete):
-        raise ChapterError("ctx.llm has no .complete() method; Hermes >=0.14 required.")
+        raise ChapterError("ctx.llm has no .complete() method.")
 
     try:
         result = complete(messages=[{"role": "user", "content": prompt}])

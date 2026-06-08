@@ -239,7 +239,7 @@ def get_transcript(
             return result
         log.info("No usable YouTube captions; falling back to Whisper.")
 
-    tmpdir = tempfile.mkdtemp(prefix="hermes-yt-")
+    tmpdir = tempfile.mkdtemp(prefix="chapterstudio-yt-")
     try:
         if progress:
             progress("downloading", "Downloading the audio-only stream from YouTube")

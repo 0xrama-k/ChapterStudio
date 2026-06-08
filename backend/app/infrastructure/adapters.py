@@ -9,12 +9,16 @@ from backend.app.domain.models import (
     TranscriptSegment,
     VideoMetadata,
 )
-from plugin.chapters import ChapterError, generate_chapters, get_video_metadata
-from plugin.formatting import to_youtube_chapters
-from plugin.transcript import TranscriptError, extract_video_id, get_transcript
+from backend.app.infrastructure.chapter_generation import (
+    ChapterError,
+    generate_chapters,
+    get_video_metadata,
+)
+from backend.app.infrastructure.formatting import to_youtube_chapters
+from backend.app.infrastructure.transcript import TranscriptError, extract_video_id, get_transcript
 
 
-class PluginVideoProvider:
+class YouTubeVideoProvider:
     def validate_video_id(self, video_id: str) -> str:
         try:
             parsed = extract_video_id(video_id.strip())
@@ -62,7 +66,7 @@ class PluginVideoProvider:
         )
 
 
-class PluginChapterGenerator:
+class ChapterGeneratorAdapter:
     def __init__(self, llm_context: object) -> None:
         self._llm_context = llm_context
 
@@ -88,7 +92,7 @@ class PluginChapterGenerator:
         ]
 
 
-class PluginChapterFormatter:
+class ChapterFormatterAdapter:
     def format(
         self,
         chapters: list[Chapter],

@@ -53,7 +53,7 @@ class OpenAiCompatibleLlm:
             headers={
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "hermes-youtube-chapters/1.0",
+                "User-Agent": "chapterstudio/1.0",
             },
             method="POST",
         )

@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from plugin.chapters import (
+from backend.app.infrastructure.chapter_generation import (
     ChapterCandidate,
     ChapterError,
     MAX_REPAIR_RESPONSE_CHARS,
@@ -12,8 +12,8 @@ from plugin.chapters import (
     _build_prompt,
     _flatten_segments,
 )
-from plugin.formatting import to_youtube_chapters
-from plugin.transcript import Segment, _friendly_download_error, _try_youtube_captions
+from backend.app.infrastructure.formatting import to_youtube_chapters
+from backend.app.infrastructure.transcript import Segment, _friendly_download_error, _try_youtube_captions
 
 
 class TranscriptTests(unittest.TestCase):
@@ -157,32 +157,7 @@ class ChapterTests(unittest.TestCase):
             )
 
 
-class ToolTests(unittest.TestCase):
-    def test_existing_chapters_skip_transcript_and_llm_context(self):
-        registry = types.ModuleType("tools.registry")
-        registry.tool_error = lambda message: {"error": message}
-        registry.tool_result = lambda **kwargs: kwargs
-
-        metadata = VideoMetadata(
-            chapters=[
-                ChapterCandidate(0, "Start"),
-                ChapterCandidate(20, "Middle"),
-                ChapterCandidate(40, "End"),
-            ],
-            duration_seconds=60,
-        )
-
-        with patch.dict(sys.modules, {"tools.registry": registry}):
-            with patch("plugin.tools.get_video_metadata", return_value=metadata):
-                with patch("plugin.tools.get_transcript") as get_transcript:
-                    from plugin.tools import handle_youtube_generate_chapters
-
-                    result = handle_youtube_generate_chapters({"url": "abcdefghijk"})
-
-        get_transcript.assert_not_called()
-        self.assertEqual(result["chapter_source"], "existing")
-        self.assertEqual(result["transcript_source"], "not_required")
-
+class FormattingTests(unittest.TestCase):
     def test_metadata_duration_prevents_caption_tail_from_dropping_chapters(self):
         result = to_youtube_chapters(
             [

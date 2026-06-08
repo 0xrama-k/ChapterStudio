@@ -1,4 +1,6 @@
--r ../plugin/requirements.txt
 fastapi>=0.115.0
+faster-whisper>=1.0.0
 python-dotenv>=1.0.0
 uvicorn[standard]>=0.30.0
+youtube-transcript-api>=0.6.2
+yt-dlp>=2024.1.0

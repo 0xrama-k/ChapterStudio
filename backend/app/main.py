@@ -7,10 +7,10 @@ from fastapi.responses import FileResponse
 from backend.app.application.generate_chapters import GenerateChaptersService
 from backend.app.application.jobs import ChapterJobManager
 from backend.app.infrastructure.openai_compatible import LlmContext, OpenAiCompatibleLlm
-from backend.app.infrastructure.plugin_adapters import (
-    PluginChapterFormatter,
-    PluginChapterGenerator,
-    PluginVideoProvider,
+from backend.app.infrastructure.adapters import (
+    ChapterFormatterAdapter,
+    ChapterGeneratorAdapter,
+    YouTubeVideoProvider,
 )
 from backend.app.presentation.api import build_router
 from backend.app.presentation.frontend import FRONTEND_INDEX, FRONTEND_PROGRESS
@@ -22,9 +22,9 @@ def create_app() -> FastAPI:
     llm = OpenAiCompatibleLlm.from_environment()
     llm_context = LlmContext(llm)
     service = GenerateChaptersService(
-        video_provider=PluginVideoProvider(),
-        chapter_generator=PluginChapterGenerator(llm_context),
-        chapter_formatter=PluginChapterFormatter(),
+        video_provider=YouTubeVideoProvider(),
+        chapter_generator=ChapterGeneratorAdapter(llm_context),
+        chapter_formatter=ChapterFormatterAdapter(),
     )
     jobs = ChapterJobManager(service)
     app = FastAPI(title="YouTube Chapters API", version="1.0.0")
