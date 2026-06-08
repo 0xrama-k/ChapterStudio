@@ -50,3 +50,12 @@ Invoke-RestMethod `
 ```
 
 The response includes a `chapters_text` field ready to paste into YouTube.
+
+## Usage diagnostics
+
+`GET /api/v1/llm-usage` returns cumulative provider-reported token usage since the
+backend started:
+
+```json
+{"requests": 3, "prompt_tokens": 9000, "completion_tokens": 850, "total_tokens": 9850}
+```

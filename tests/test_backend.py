@@ -155,7 +155,10 @@ class OpenAiCompatibleLlmTests(unittest.TestCase):
                 return None
 
             def read(self):
-                return b'{"choices":[{"message":{"content":"[]"}}]}'
+                return (
+                    b'{"choices":[{"message":{"content":"[]"}}],'
+                    b'"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}'
+                )
 
         llm = OpenAiCompatibleLlm("https://example.test", "secret", "model")
         with patch("urllib.request.urlopen", return_value=Response()) as urlopen:
@@ -164,6 +167,10 @@ class OpenAiCompatibleLlmTests(unittest.TestCase):
         payload = json.loads(urlopen.call_args.args[0].data)
         self.assertEqual(payload["max_tokens"], 1200)
         self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(
+            llm.usage_snapshot(),
+            {"requests": 1, "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        )
 
     def test_http_error_includes_provider_response(self):
         error = urllib.error.HTTPError(

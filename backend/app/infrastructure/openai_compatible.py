@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
 from backend.app.domain.models import ChapterGenerationError
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,8 @@ class OpenAiCompatibleLlm:
         self._api_key = api_key
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._usage = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self._usage_lock = threading.Lock()
 
     @classmethod
     def from_environment(cls) -> OpenAiCompatibleLlm:
@@ -69,7 +75,40 @@ class OpenAiCompatibleLlm:
             raise ChapterGenerationError("LLM returned an unexpected response shape.") from error
         if not isinstance(text, str):
             raise ChapterGenerationError("LLM returned non-text content.")
+        self._record_usage(payload.get("usage"))
         return LlmResponse(text=text)
+
+    def usage_snapshot(self) -> dict[str, int]:
+        with self._usage_lock:
+            return dict(self._usage)
+
+    def _record_usage(self, usage: object) -> None:
+        provider_usage = usage if isinstance(usage, dict) else {}
+        prompt_tokens = _usage_int(provider_usage, "prompt_tokens", "input_tokens")
+        completion_tokens = _usage_int(provider_usage, "completion_tokens", "output_tokens")
+        total_tokens = _usage_int(provider_usage, "total_tokens")
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + completion_tokens
+        with self._usage_lock:
+            self._usage["requests"] += 1
+            self._usage["prompt_tokens"] += prompt_tokens
+            self._usage["completion_tokens"] += completion_tokens
+            self._usage["total_tokens"] += total_tokens
+        log.info(
+            "LLM usage model=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+            self._model,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
+
+
+def _usage_int(usage: dict, *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, int):
+            return value
+    return 0
 
 
 class LlmContext:

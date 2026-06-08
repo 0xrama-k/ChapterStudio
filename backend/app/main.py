@@ -19,7 +19,8 @@ load_dotenv()
 
 
 def create_app() -> FastAPI:
-    llm_context = LlmContext(OpenAiCompatibleLlm.from_environment())
+    llm = OpenAiCompatibleLlm.from_environment()
+    llm_context = LlmContext(llm)
     service = GenerateChaptersService(
         video_provider=PluginVideoProvider(),
         chapter_generator=PluginChapterGenerator(llm_context),
@@ -40,6 +41,10 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/v1/llm-usage")
+    def llm_usage() -> dict[str, int]:
+        return llm.usage_snapshot()
 
     return app
 
