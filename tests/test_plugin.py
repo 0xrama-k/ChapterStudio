@@ -6,6 +6,7 @@ from unittest.mock import patch
 from plugin.chapters import (
     ChapterCandidate,
     ChapterError,
+    MAX_REPAIR_RESPONSE_CHARS,
     VideoMetadata,
     _ask_llm_for_chapters,
     _build_prompt,
@@ -92,6 +93,29 @@ class TranscriptTests(unittest.TestCase):
 
 
 class ChapterTests(unittest.TestCase):
+    def test_json_repair_prompt_is_compact_and_truncated(self):
+        prompts = []
+
+        def complete(**kwargs):
+            prompt = kwargs["messages"][0]["content"]
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                return types.SimpleNamespace(text="x" * (MAX_REPAIR_RESPONSE_CHARS + 500))
+            return types.SimpleNamespace(text='[{"start_seconds": 0, "title": "Start"}]')
+
+        ctx = types.SimpleNamespace(llm=types.SimpleNamespace(complete=complete))
+        chapters = _ask_llm_for_chapters(
+            ctx,
+            "[0s] hello",
+            duration_seconds=60,
+            title_language="auto",
+            is_chunk=False,
+        )
+
+        self.assertEqual(chapters[0].title, "Start")
+        self.assertLess(len(prompts[1]), MAX_REPAIR_RESPONSE_CHARS + 300)
+        self.assertNotIn("Transcript (each line", prompts[1])
+
     def test_flatten_segments_removes_rolling_caption_overlap(self):
         flattened = _flatten_segments(
             [

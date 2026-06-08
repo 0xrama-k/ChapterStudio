@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 # Roughly 4 chars per token; leaves headroom for prompt + completion in a 64K window.
 DEFAULT_CHUNK_CHARS = 40_000
+MAX_REPAIR_RESPONSE_CHARS = 8_000
 
 
 class ChapterError(Exception):
@@ -271,10 +272,12 @@ def _ask_llm_for_chapters(
         data = _parse_json_array(raw)
     except (json.JSONDecodeError, ValueError) as e:
         # One retry with an explicit fix request.
+        repair_input = raw[:MAX_REPAIR_RESPONSE_CHARS]
         fix_prompt = (
-            "Your previous reply was not valid JSON. Reply with ONLY a JSON array of "
-            '{"start_seconds": int, "title": str} objects. No fences, no prose. '
-            f"Your previous reply was:\n---\n{raw}\n---"
+            "Convert the text below into ONLY a valid JSON array of "
+            '{"start_seconds": int, "title": str} objects. Preserve valid chapter data. '
+            "No prose or markdown fences.\n"
+            f"{repair_input}"
         )
         raw2 = _call_llm(ctx, fix_prompt)
         try:
