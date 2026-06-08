@@ -1,6 +1,7 @@
 import unittest
 import urllib.error
 import time
+import json
 from unittest.mock import patch
 
 from backend.app.application.generate_chapters import GenerateChaptersService
@@ -145,6 +146,25 @@ class ApiTests(unittest.TestCase):
 
 
 class OpenAiCompatibleLlmTests(unittest.TestCase):
+    def test_request_limits_completion_tokens(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"[]"}}]}'
+
+        llm = OpenAiCompatibleLlm("https://example.test", "secret", "model")
+        with patch("urllib.request.urlopen", return_value=Response()) as urlopen:
+            llm.complete(messages=[{"role": "user", "content": "hello"}])
+
+        payload = json.loads(urlopen.call_args.args[0].data)
+        self.assertEqual(payload["max_tokens"], 1200)
+        self.assertEqual(payload["temperature"], 0.2)
+
     def test_http_error_includes_provider_response(self):
         error = urllib.error.HTTPError(
             url="https://example.test/chat/completions",

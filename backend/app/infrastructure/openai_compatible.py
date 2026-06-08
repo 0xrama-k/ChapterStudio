@@ -33,7 +33,14 @@ class OpenAiCompatibleLlm:
         return cls(base_url=base_url, api_key=api_key, model=model)
 
     def complete(self, *, messages: list[dict[str, str]]) -> LlmResponse:
-        body = json.dumps({"model": self._model, "messages": messages}).encode("utf-8")
+        body = json.dumps(
+            {
+                "model": self._model,
+                "messages": messages,
+                "max_tokens": 1200,
+                "temperature": 0.2,
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(
             self._url,
             data=body,
